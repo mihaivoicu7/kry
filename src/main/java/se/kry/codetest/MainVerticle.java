@@ -8,6 +8,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import org.apache.commons.validator.routines.UrlValidator;
+
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
@@ -18,7 +20,6 @@ import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.ext.web.handler.StaticHandler;
-import org.apache.commons.validator.routines.UrlValidator;
 import se.kry.codetest.dao.ServiceDao;
 import se.kry.codetest.dto.ServiceDTO;
 
@@ -28,6 +29,7 @@ public class MainVerticle extends AbstractVerticle {
   private static final String URL_PARAM = "url";
   private static final String NAME_PARAM = "name";
   private static final String OK = "OK";
+  private static final String FAIL = "Fail";
   private static final String NOT_FOUND = "Not found.";
   private final Map<String, ServiceDTO> services = new ConcurrentHashMap<>();
   private UrlValidator urlValidator = UrlValidator.getInstance();
@@ -39,7 +41,8 @@ public class MainVerticle extends AbstractVerticle {
   public void start(Future<Void> startFuture) {
     this.connector = new DBConnector(vertx);
     this.serviceDao = new ServiceDao(this.connector);
-    Future<Void> steps = prepareDatabase().compose(v -> getServicesFromDB()).compose(v -> startBackgroundPoller()).compose(v -> startHttpServer());
+    Future<Void> steps = prepareDatabase().compose(v -> getServicesFromDB()).compose(v -> startBackgroundPoller())
+        .compose(v -> startHttpServer());
     steps.setHandler(ar -> {
       if (ar.succeeded()) {
         System.out.println("KRY code test service started");
@@ -76,7 +79,7 @@ public class MainVerticle extends AbstractVerticle {
 
   private final Future<Void> getServicesFromDB() {
     final Future<Void> dbServices = Future.future();
-    this.serviceDao.getAllServices().setHandler( done -> {
+    this.serviceDao.getAllServices().setHandler(done -> {
       if (done.succeeded()) {
         this.services.putAll(done.result().stream().collect(Collectors.toMap(ServiceDTO::getUrl, Function.identity())));
         System.out.println("Finished getting services from db");
@@ -114,7 +117,6 @@ public class MainVerticle extends AbstractVerticle {
           }
         });
       });
-      System.out.println("Polling finished");
     } else {
       System.out.println("Polling failed");
     }
@@ -128,37 +130,51 @@ public class MainVerticle extends AbstractVerticle {
   }
 
   private void createServiceHandler(RoutingContext context) {
-    int responseStatusCode = 200;
-    String responseMessage = OK;
     JsonObject requestBody = context.getBodyAsJson();
     JsonObject responseBody = new JsonObject();
-    if (!requestBody.containsKey(URL_PARAM) || !requestBody.containsKey(NAME_PARAM)) {
-      responseStatusCode = 400;
-      responseMessage = "Missing service parameters";
+    if (!this.validateCreateRequest(requestBody, responseBody)) {
+      context.response().setStatusCode(400).putHeader("content-type", "application/json").end(responseBody.encode());
     } else {
       String url = requestBody.getString("url");
-      if(!this.urlValidator.isValid(url)) {
-        responseStatusCode = 400;
-        responseMessage = "Invalid url";
+      if (!services.containsKey(url)) {
+        String name = requestBody.getString("name");
+        ServiceDTO serviceDTO = new ServiceDTO(url, name, BackgroundPoller.UNKNOWN_STATUS);
+        this.serviceDao.saveService(serviceDTO).setHandler(done -> {
+          if (done.succeeded()) {
+            services.put(url, serviceDTO);
+            responseBody.put("message", OK);
+          } else {
+            responseBody.put("message", FAIL);
+          }
+          context.response().setStatusCode(201).putHeader("content-type", "application/json")
+              .end(responseBody.encode());
+        });
       } else {
-        if(!services.containsKey(url)) {
-          String name = requestBody.getString("name");
-          services.put(url, new ServiceDTO(url, name, BackgroundPoller.UNKNOWN_STATUS));
-        }
+        context.response().setStatusCode(200).putHeader("content-type", "application/json").end(responseBody.encode());
       }
     }
-    responseBody.put("message", responseMessage);
-    context.response().setStatusCode(responseStatusCode).putHeader("content-type", "application/json")
-        .end(responseBody.encode());
+
+  }
+
+  private boolean validateCreateRequest(JsonObject requestBody, JsonObject responseBody) {
+    if (!requestBody.containsKey(URL_PARAM) || !requestBody.containsKey(NAME_PARAM)) {
+      responseBody.put("message", "Missing service parameters");
+      return false;
+    }
+    String url = requestBody.getString("url");
+    if (!this.urlValidator.isValid(url)) {
+      responseBody.put("message", "Invalid URL");
+      return false;
+    }
+    return true;
   }
 
   private void getServicesHandler(RoutingContext context) {
-    List<JsonObject> jsonServices = services.entrySet().stream()
-        .map(service -> {
-          ServiceDTO serviceDTO = service.getValue();
-          return new JsonObject().put(URL_PARAM, service.getKey()).put("status", serviceDTO.getStatus()).put(NAME_PARAM, serviceDTO.getName()).put("date", serviceDTO.getDateFormatted());
-        })
-        .collect(Collectors.toList());
+    List<JsonObject> jsonServices = services.entrySet().stream().map(service -> {
+      ServiceDTO serviceDTO = service.getValue();
+      return new JsonObject().put(URL_PARAM, service.getKey()).put("status", serviceDTO.getStatus())
+          .put(NAME_PARAM, serviceDTO.getName()).put("date", serviceDTO.getDateFormatted());
+    }).collect(Collectors.toList());
     context.response().putHeader("content-type", "application/json").end(new JsonArray(jsonServices).encode());
   }
 
