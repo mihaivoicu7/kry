@@ -8,6 +8,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 import io.vertx.core.AbstractVerticle;
+import io.vertx.core.AsyncResult;
 import io.vertx.core.Future;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
@@ -50,13 +51,12 @@ public class MainVerticle extends AbstractVerticle {
       synchronized (this.services) {
         servicesToBePolled.addAll(this.services.keySet());
       }
-      poller.pollServices(servicesToBePolled);
+      poller.pollServices(servicesToBePolled).setHandler(this::pollingFinishedHandler);
     });
     System.out.println("Backend service poller started");
     startPollerFuture.complete();
     return startPollerFuture;
   }
-
 
   private Future<Void> prepareDatabase() {
     this.connector = new DBConnector(vertx);
@@ -85,6 +85,24 @@ public class MainVerticle extends AbstractVerticle {
       }
     });
     return httpServerStartFuture;
+  }
+
+  private void pollingFinishedHandler(AsyncResult<Map<String, Future<String>>> response) {
+    if (response.succeeded()) {
+      Map<String, Future<String>> pollingResult = response.result();
+      pollingResult.keySet().forEach(key -> {
+        pollingResult.get(key).setHandler(handler -> {
+          synchronized (this.services) {
+            if (this.services.containsKey(key)) {
+              this.services.put(key, handler.result());
+            }
+          }
+        });
+      });
+      System.out.println("Polling finished");
+    } else {
+      System.out.println("Polling failed");
+    }
   }
 
   private void setRoutes(Router router) {
