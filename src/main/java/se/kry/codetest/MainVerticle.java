@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import io.vertx.core.AbstractVerticle;
@@ -18,25 +19,27 @@ import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.ext.web.handler.StaticHandler;
 import org.apache.commons.validator.routines.UrlValidator;
+import se.kry.codetest.dao.ServiceDao;
 import se.kry.codetest.dto.ServiceDTO;
 
 public class MainVerticle extends AbstractVerticle {
 
-  private static final String SQL_CREATE_SERVICE_TABLE_IF_NOT_EXISTS = "CREATE TABLE IF NOT EXISTS service (url VARCHAR(128) NOT NULL UNIQUE)";
+  private static final String SQL_CREATE_SERVICE_TABLE_IF_NOT_EXISTS = "CREATE TABLE IF NOT EXISTS service (url VARCHAR(128) NOT NULL UNIQUE, name VARCHAR(128), date INTEGER)";
   private static final String URL_PARAM = "url";
   private static final String NAME_PARAM = "name";
   private static final String OK = "OK";
   private static final String NOT_FOUND = "Not found.";
-  private Map<String, ServiceDTO> services = new ConcurrentHashMap<>();
+  private final Map<String, ServiceDTO> services = new ConcurrentHashMap<>();
   private UrlValidator urlValidator = UrlValidator.getInstance();
-  //private UrlV
-  // TODO use this
   private DBConnector connector;
   private BackgroundPoller poller;
+  private ServiceDao serviceDao;
 
   @Override
   public void start(Future<Void> startFuture) {
-    Future<Void> steps = prepareDatabase().compose(v -> startBackgroundPoller()).compose(v -> startHttpServer());
+    this.connector = new DBConnector(vertx);
+    this.serviceDao = new ServiceDao(this.connector);
+    Future<Void> steps = prepareDatabase().compose(v -> getServicesFromDB()).compose(v -> startBackgroundPoller()).compose(v -> startHttpServer());
     steps.setHandler(ar -> {
       if (ar.succeeded()) {
         System.out.println("KRY code test service started");
@@ -59,7 +62,6 @@ public class MainVerticle extends AbstractVerticle {
   }
 
   private Future<Void> prepareDatabase() {
-    this.connector = new DBConnector(vertx);
     final Future<Void> databaseFuture = Future.future();
     connector.query(SQL_CREATE_SERVICE_TABLE_IF_NOT_EXISTS).setHandler(done -> {
       if (done.succeeded()) {
@@ -70,6 +72,20 @@ public class MainVerticle extends AbstractVerticle {
       }
     });
     return databaseFuture;
+  }
+
+  private final Future<Void> getServicesFromDB() {
+    final Future<Void> dbServices = Future.future();
+    this.serviceDao.getAllServices().setHandler( done -> {
+      if (done.succeeded()) {
+        this.services.putAll(done.result().stream().collect(Collectors.toMap(ServiceDTO::getUrl, Function.identity())));
+        System.out.println("Finished getting services from db");
+        dbServices.complete();
+      } else {
+        dbServices.fail(done.cause());
+      }
+    });
+    return dbServices;
   }
 
   private Future<Void> startHttpServer() {

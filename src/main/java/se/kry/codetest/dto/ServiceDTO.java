@@ -26,6 +26,12 @@ public class ServiceDTO {
     this.status = status;
   }
 
+  public ServiceDTO(String url, String name, Long date) {
+    this.url = url;
+    this.name = name;
+    this.date = date;
+  }
+
   public String getUrl() {
     return url;
   }
