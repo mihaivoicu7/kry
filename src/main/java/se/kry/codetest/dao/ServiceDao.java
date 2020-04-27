@@ -16,6 +16,8 @@ public class ServiceDao {
 
   private static final String SQL_CREATE_SERVICE = "INSERT INTO service values (?, ?, ?)";
 
+  private static final String SQL_DELETE_SERVICE = "DELETE FROM service where url = ?";
+
   private final DBConnector dbConnector;
 
   public ServiceDao(DBConnector dbConnector) {
@@ -57,5 +59,23 @@ public class ServiceDao {
       createFuture.fail("Missing service params.");
     }
     return createFuture;
+  }
+
+  public Future<Void> deleteService(String url) {
+    Future<Void> deleteFuture = Future.future();
+    if (url != null) {
+      JsonArray inputParams = new JsonArray();
+      inputParams.add(url);
+      dbConnector.updateWithParams(SQL_DELETE_SERVICE, inputParams).setHandler(done -> {
+        if (!done.succeeded()) {
+          deleteFuture.fail(done.cause());
+        } else {
+          deleteFuture.complete();
+        }
+      });
+    } else {
+      deleteFuture.fail("Missing service params.");
+    }
+    return deleteFuture;
   }
 }

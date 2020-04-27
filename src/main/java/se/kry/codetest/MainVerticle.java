@@ -8,6 +8,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+import io.vertx.ext.web.handler.CookieHandler;
 import org.apache.commons.validator.routines.UrlValidator;
 
 import io.vertx.core.AbstractVerticle;
@@ -123,6 +124,7 @@ public class MainVerticle extends AbstractVerticle {
   }
 
   private void setRoutes(Router router) {
+    router.route().handler(CookieHandler.create());
     router.route("/*").handler(StaticHandler.create());
     router.get("/service").handler(this::getServicesHandler);
     router.post("/service").handler(this::createServiceHandler);
@@ -153,7 +155,6 @@ public class MainVerticle extends AbstractVerticle {
         context.response().setStatusCode(200).putHeader("content-type", "application/json").end(responseBody.encode());
       }
     }
-
   }
 
   private boolean validateCreateRequest(JsonObject requestBody, JsonObject responseBody) {
@@ -179,19 +180,22 @@ public class MainVerticle extends AbstractVerticle {
   }
 
   private void deleteServiceHandler(RoutingContext context) {
-    int responseStatusCode = 200;
-    String responseMessage = OK;
     if (context.queryParams().contains(URL_PARAM)) {
       String url = context.queryParams().get(URL_PARAM);
-      if (Objects.nonNull(this.services.remove(url))) {
-        responseStatusCode = 404;
-        responseMessage = NOT_FOUND;
+      if (Objects.isNull(this.services.remove(url))) {
+        context.response().putHeader("content-type", "text/plain").setStatusCode(404).end(NOT_FOUND);
+      } else {
+        this.serviceDao.deleteService(url).setHandler( done -> {
+          if (done.succeeded()) {
+            context.response().putHeader("content-type", "text/plain").setStatusCode(200).end(OK);
+          } else {
+            context.response().putHeader("content-type", "text/plain").setStatusCode(500).end(FAIL);
+          }
+        });
       }
     } else {
-      responseStatusCode = 400;
-      responseMessage = "Missing url param.";
+      context.response().putHeader("content-type", "text/plain").setStatusCode(400).end("Missing url param.");
     }
-    context.response().putHeader("content-type", "text/plain").setStatusCode(responseStatusCode).end(responseMessage);
   }
 
 }
