@@ -1,22 +1,23 @@
 package se.kry.codetest;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.stream.Collectors;
+
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
+import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.ext.web.handler.StaticHandler;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.stream.Collectors;
-
 public class MainVerticle extends AbstractVerticle {
 
-  private static final String SQL_CREATE_SERVICE_TABLE_IF_NOT_EXISTS = "CREATE TABLE IF NOT EXISTS service (url VARCHAR(128) NOT NULL)";
+  private static final String SQL_CREATE_SERVICE_TABLE_IF_NOT_EXISTS = "CREATE TABLE IF NOT EXISTS service (url VARCHAR(128) NOT NULL UNIQUE)";
   private HashMap<String, String> services = new HashMap<>();
-  //TODO use this
+  // TODO use this
   private DBConnector connector;
   private BackgroundPoller poller = new BackgroundPoller();
 
@@ -64,31 +65,23 @@ public class MainVerticle extends AbstractVerticle {
     return httpServerStartFuture;
   }
 
-  private void setRoutes(Router router){
+  private void setRoutes(Router router) {
     router.route("/*").handler(StaticHandler.create());
-    router.get("/service").handler(req -> {
-      List<JsonObject> jsonServices = services
-          .entrySet()
-          .stream()
-          .map(service ->
-              new JsonObject()
-                  .put("name", service.getKey())
-                  .put("status", service.getValue()))
-          .collect(Collectors.toList());
-      req.response()
-          .putHeader("content-type", "application/json")
-          .end(new JsonArray(jsonServices).encode());
-    });
-    router.post("/service").handler(req -> {
-      JsonObject jsonBody = req.getBodyAsJson();
-      services.put(jsonBody.getString("url"), "UNKNOWN");
-      req.response()
-          .putHeader("content-type", "text/plain")
-          .end("OK");
-    });
+    router.get("/service").handler(this::getServicesHandler);
+    router.post("/service").handler(this::createServiceHandler);
+  }
+
+  private void createServiceHandler(RoutingContext context) {
+    JsonObject jsonBody = context.getBodyAsJson();
+    services.put(jsonBody.getString("url"), "UNKNOWN");
+    context.response().putHeader("content-type", "text/plain").end("OK");
+  }
+
+  private void getServicesHandler(RoutingContext context) {
+    List<JsonObject> jsonServices = services.entrySet().stream()
+        .map(service -> new JsonObject().put("name", service.getKey()).put("status", service.getValue()))
+        .collect(Collectors.toList());
+    context.response().putHeader("content-type", "application/json").end(new JsonArray(jsonServices).encode());
   }
 
 }
-
-
-
