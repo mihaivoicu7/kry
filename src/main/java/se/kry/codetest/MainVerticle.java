@@ -14,6 +14,7 @@ import java.util.stream.Collectors;
 
 public class MainVerticle extends AbstractVerticle {
 
+  private static final String SQL_CREATE_SERVICE_TABLE_IF_NOT_EXISTS = "CREATE TABLE IF NOT EXISTS service (url VARCHAR(128) NOT NULL)";
   private HashMap<String, String> services = new HashMap<>();
   //TODO use this
   private DBConnector connector;
@@ -21,23 +22,46 @@ public class MainVerticle extends AbstractVerticle {
 
   @Override
   public void start(Future<Void> startFuture) {
-    connector = new DBConnector(vertx);
-    Router router = Router.router(vertx);
-    router.route().handler(BodyHandler.create());
+    Future<Void> steps = prepareDatabase().compose(v -> startHttpServer());
     services.put("https://www.kry.se", "UNKNOWN");
     vertx.setPeriodic(1000 * 60, timerId -> poller.pollServices(services));
+    steps.setHandler(ar -> {
+      if (ar.succeeded()) {
+        System.out.println("KRY code test service started");
+        startFuture.complete();
+      } else {
+        startFuture.fail(ar.cause());
+      }
+    });
+  }
+
+  private Future<Void> prepareDatabase() {
+    this.connector = new DBConnector(vertx);
+    final Future<Void> databaseFuture = Future.future();
+    connector.query(SQL_CREATE_SERVICE_TABLE_IF_NOT_EXISTS).setHandler(done -> {
+      if (done.succeeded()) {
+        System.out.println("completed db migrations");
+        databaseFuture.complete();
+      } else {
+        databaseFuture.fail(done.cause());
+      }
+    });
+    return databaseFuture;
+  }
+
+  private Future<Void> startHttpServer() {
+    final Future<Void> httpServerStartFuture = Future.future();
+    Router router = Router.router(vertx);
+    router.route().handler(BodyHandler.create());
     setRoutes(router);
-    vertx
-        .createHttpServer()
-        .requestHandler(router)
-        .listen(8080, result -> {
-          if (result.succeeded()) {
-            System.out.println("KRY code test service started");
-            startFuture.complete();
-          } else {
-            startFuture.fail(result.cause());
-          }
-        });
+    vertx.createHttpServer().requestHandler(router).listen(8080, result -> {
+      if (result.succeeded()) {
+        httpServerStartFuture.complete();
+      } else {
+        httpServerStartFuture.fail(result.cause());
+      }
+    });
+    return httpServerStartFuture;
   }
 
   private void setRoutes(Router router){
