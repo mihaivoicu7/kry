@@ -3,7 +3,7 @@ package se.kry.codetest;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
@@ -27,7 +27,6 @@ public class MainVerticle extends AbstractVerticle {
   private static final String NAME_PARAM = "name";
   private static final String OK = "OK";
   private static final String NOT_FOUND = "Not found.";
-  private Map<String, String> serviceStatusMap = new ConcurrentHashMap<>();
   private Map<String, ServiceDTO> services = new ConcurrentHashMap<>();
   private UrlValidator urlValidator = UrlValidator.getInstance();
   //private UrlV
@@ -51,12 +50,8 @@ public class MainVerticle extends AbstractVerticle {
   private Future<Void> startBackgroundPoller() {
     final Future<Void> startPollerFuture = Future.future();
     this.poller = new BackgroundPoller(WebClient.create(vertx));
-    vertx.setPeriodic(1000 * 60, timerId -> {
-      Set<String> servicesToBePolled = new HashSet<>();
-      synchronized (this.serviceStatusMap) {
-        servicesToBePolled.addAll(this.serviceStatusMap.keySet());
-      }
-      poller.pollServices(servicesToBePolled).setHandler(this::pollingFinishedHandler);
+    vertx.setPeriodic(1000 * 10, timerId -> {
+      poller.pollServices(new HashSet<>(this.services.keySet())).setHandler(this::pollingFinishedHandler);
     });
     System.out.println("Backend service poller started");
     startPollerFuture.complete();
@@ -97,10 +92,9 @@ public class MainVerticle extends AbstractVerticle {
       Map<String, Future<String>> pollingResult = response.result();
       pollingResult.keySet().forEach(key -> {
         pollingResult.get(key).setHandler(handler -> {
-          synchronized (this.serviceStatusMap) {
-            if (this.serviceStatusMap.containsKey(key)) {
-              this.serviceStatusMap.put(key, handler.result());
-            }
+          ServiceDTO serviceDTO = this.services.get(key);
+          if (Objects.nonNull(serviceDTO)) {
+            serviceDTO.setStatus(handler.result());
           }
         });
       });
@@ -131,9 +125,10 @@ public class MainVerticle extends AbstractVerticle {
         responseStatusCode = 400;
         responseMessage = "Invalid url";
       } else {
-        String name = requestBody.getString("name");
-        serviceStatusMap.put(url, BackgroundPoller.UNKNOWN_STATUS);
-        services.put(url, new ServiceDTO(url, name));
+        if(!services.containsKey(url)) {
+          String name = requestBody.getString("name");
+          services.put(url, new ServiceDTO(url, name, BackgroundPoller.UNKNOWN_STATUS));
+        }
       }
     }
     responseBody.put("message", responseMessage);
@@ -142,8 +137,11 @@ public class MainVerticle extends AbstractVerticle {
   }
 
   private void getServicesHandler(RoutingContext context) {
-    List<JsonObject> jsonServices = serviceStatusMap.entrySet().stream()
-        .map(service -> new JsonObject().put("name", service.getKey()).put("status", service.getValue()))
+    List<JsonObject> jsonServices = services.entrySet().stream()
+        .map(service -> {
+          ServiceDTO serviceDTO = service.getValue();
+          return new JsonObject().put(URL_PARAM, service.getKey()).put("status", serviceDTO.getStatus()).put(NAME_PARAM, serviceDTO.getName()).put("date", serviceDTO.getDateFormatted());
+        })
         .collect(Collectors.toList());
     context.response().putHeader("content-type", "application/json").end(new JsonArray(jsonServices).encode());
   }
@@ -153,8 +151,7 @@ public class MainVerticle extends AbstractVerticle {
     String responseMessage = OK;
     if (context.queryParams().contains(URL_PARAM)) {
       String url = context.queryParams().get(URL_PARAM);
-      String status = this.serviceStatusMap.remove(url);
-      if (status == null) {
+      if (Objects.nonNull(this.services.remove(url))) {
         responseStatusCode = 404;
         responseMessage = NOT_FOUND;
       }

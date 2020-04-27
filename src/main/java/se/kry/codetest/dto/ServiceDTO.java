@@ -13,10 +13,17 @@ public class ServiceDTO {
 
   private final Long date;
 
+  private String status;
+
   public ServiceDTO(String url, String name) {
     this.url = url;
     this.name = name;
     this.date = new Date().getTime();
+  }
+
+  public ServiceDTO(String url, String name, String status) {
+    this(url, name);
+    this.status = status;
   }
 
   public String getUrl() {
@@ -29,6 +36,14 @@ public class ServiceDTO {
 
   public Long getDate() {
     return date;
+  }
+
+  public String getStatus() {
+    return status;
+  }
+
+  public void setStatus(String status) {
+    this.status = status;
   }
 
   public String getDateFormatted() {
