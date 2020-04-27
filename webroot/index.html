@@ -3,15 +3,32 @@
 <head>
     <meta charset="UTF-8">
     <title>Welcome to KRY</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css"
+          integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous">
 </head>
 <body>
-KRY status poller
-<ul id="service-list">
-</ul>
-<input type="text" id="url-name">
-<button id="post-service">Save</button>
-
+<div class="container">
+    <div class="row">
+        <div class="col">
+            KRY status poller
+            <ul id="service-list">
+            </ul>
+        </div>
+    </div>
+    <div class="row" id="service-form">
+        <div class="col">
+            <input type="text" class="form-control" id="url" placeholder="URL">
+        </div>
+        <div class="col">
+            <input type="text" class="form-control" id="name" placeholder="Name">
+        </div>
+        <div class="col">
+            <button id="post-service" class="btn btn-primary mb-2">Save</button>
+        </div>
+    </div>
+</div>
 </body>
+<script src="https://code.jquery.com/jquery-3.4.1.slim.min.js" integrity="sha384-J6qa4849blE2+poT4WnyKhv5vZF5SrPo0iEjwBvKU7imGFAV0wwj1yYfoRSJoZ+n" crossorigin="anonymous"></script>
 <script src="static/code.js">
 </script>
 </html>

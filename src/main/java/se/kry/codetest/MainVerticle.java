@@ -17,14 +17,20 @@ import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.ext.web.handler.StaticHandler;
+import org.apache.commons.validator.routines.UrlValidator;
+import se.kry.codetest.dto.ServiceDTO;
 
 public class MainVerticle extends AbstractVerticle {
 
   private static final String SQL_CREATE_SERVICE_TABLE_IF_NOT_EXISTS = "CREATE TABLE IF NOT EXISTS service (url VARCHAR(128) NOT NULL UNIQUE)";
   private static final String URL_PARAM = "url";
+  private static final String NAME_PARAM = "name";
   private static final String OK = "OK";
   private static final String NOT_FOUND = "Not found.";
-  private Map<String, String> services = new ConcurrentHashMap<>();
+  private Map<String, String> serviceStatusMap = new ConcurrentHashMap<>();
+  private Map<String, ServiceDTO> services = new ConcurrentHashMap<>();
+  private UrlValidator urlValidator = UrlValidator.getInstance();
+  //private UrlV
   // TODO use this
   private DBConnector connector;
   private BackgroundPoller poller;
@@ -32,7 +38,6 @@ public class MainVerticle extends AbstractVerticle {
   @Override
   public void start(Future<Void> startFuture) {
     Future<Void> steps = prepareDatabase().compose(v -> startBackgroundPoller()).compose(v -> startHttpServer());
-    services.put("https://www.kry.se", "UNKNOWN");
     steps.setHandler(ar -> {
       if (ar.succeeded()) {
         System.out.println("KRY code test service started");
@@ -48,8 +53,8 @@ public class MainVerticle extends AbstractVerticle {
     this.poller = new BackgroundPoller(WebClient.create(vertx));
     vertx.setPeriodic(1000 * 60, timerId -> {
       Set<String> servicesToBePolled = new HashSet<>();
-      synchronized (this.services) {
-        servicesToBePolled.addAll(this.services.keySet());
+      synchronized (this.serviceStatusMap) {
+        servicesToBePolled.addAll(this.serviceStatusMap.keySet());
       }
       poller.pollServices(servicesToBePolled).setHandler(this::pollingFinishedHandler);
     });
@@ -92,9 +97,9 @@ public class MainVerticle extends AbstractVerticle {
       Map<String, Future<String>> pollingResult = response.result();
       pollingResult.keySet().forEach(key -> {
         pollingResult.get(key).setHandler(handler -> {
-          synchronized (this.services) {
-            if (this.services.containsKey(key)) {
-              this.services.put(key, handler.result());
+          synchronized (this.serviceStatusMap) {
+            if (this.serviceStatusMap.containsKey(key)) {
+              this.serviceStatusMap.put(key, handler.result());
             }
           }
         });
@@ -113,13 +118,31 @@ public class MainVerticle extends AbstractVerticle {
   }
 
   private void createServiceHandler(RoutingContext context) {
-    JsonObject jsonBody = context.getBodyAsJson();
-    services.put(jsonBody.getString("url"), "UNKNOWN");
-    context.response().putHeader("content-type", "text/plain").end("OK");
+    int responseStatusCode = 200;
+    String responseMessage = OK;
+    JsonObject requestBody = context.getBodyAsJson();
+    JsonObject responseBody = new JsonObject();
+    if (!requestBody.containsKey(URL_PARAM) || !requestBody.containsKey(NAME_PARAM)) {
+      responseStatusCode = 400;
+      responseMessage = "Missing service parameters";
+    } else {
+      String url = requestBody.getString("url");
+      if(!this.urlValidator.isValid(url)) {
+        responseStatusCode = 400;
+        responseMessage = "Invalid url";
+      } else {
+        String name = requestBody.getString("name");
+        serviceStatusMap.put(url, BackgroundPoller.UNKNOWN_STATUS);
+        services.put(url, new ServiceDTO(url, name));
+      }
+    }
+    responseBody.put("message", responseMessage);
+    context.response().setStatusCode(responseStatusCode).putHeader("content-type", "application/json")
+        .end(responseBody.encode());
   }
 
   private void getServicesHandler(RoutingContext context) {
-    List<JsonObject> jsonServices = services.entrySet().stream()
+    List<JsonObject> jsonServices = serviceStatusMap.entrySet().stream()
         .map(service -> new JsonObject().put("name", service.getKey()).put("status", service.getValue()))
         .collect(Collectors.toList());
     context.response().putHeader("content-type", "application/json").end(new JsonArray(jsonServices).encode());
@@ -130,7 +153,7 @@ public class MainVerticle extends AbstractVerticle {
     String responseMessage = OK;
     if (context.queryParams().contains(URL_PARAM)) {
       String url = context.queryParams().get(URL_PARAM);
-      String status = this.services.remove(url);
+      String status = this.serviceStatusMap.remove(url);
       if (status == null) {
         responseStatusCode = 404;
         responseMessage = NOT_FOUND;
