@@ -25,3 +25,7 @@ saveButton.onclick = evt => {
     body: JSON.stringify({url, name})
   }).then(res => location.reload());
 };
+
+setTimeout(function () {
+  location.reload();
+}, 60 * 5 * 1000);
