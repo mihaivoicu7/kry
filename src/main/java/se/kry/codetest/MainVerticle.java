@@ -1,7 +1,9 @@
 package se.kry.codetest;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
@@ -11,6 +13,7 @@ import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.client.WebClient;
 import io.vertx.ext.web.handler.BodyHandler;
 import io.vertx.ext.web.handler.StaticHandler;
 
@@ -23,13 +26,12 @@ public class MainVerticle extends AbstractVerticle {
   private Map<String, String> services = new ConcurrentHashMap<>();
   // TODO use this
   private DBConnector connector;
-  private BackgroundPoller poller = new BackgroundPoller();
+  private BackgroundPoller poller;
 
   @Override
   public void start(Future<Void> startFuture) {
-    Future<Void> steps = prepareDatabase().compose(v -> startHttpServer());
+    Future<Void> steps = prepareDatabase().compose(v -> startBackgroundPoller()).compose(v -> startHttpServer());
     services.put("https://www.kry.se", "UNKNOWN");
-    vertx.setPeriodic(1000 * 60, timerId -> poller.pollServices(services));
     steps.setHandler(ar -> {
       if (ar.succeeded()) {
         System.out.println("KRY code test service started");
@@ -40,12 +42,28 @@ public class MainVerticle extends AbstractVerticle {
     });
   }
 
+  private Future<Void> startBackgroundPoller() {
+    final Future<Void> startPollerFuture = Future.future();
+    this.poller = new BackgroundPoller(WebClient.create(vertx));
+    vertx.setPeriodic(1000 * 60, timerId -> {
+      Set<String> servicesToBePolled = new HashSet<>();
+      synchronized (this.services) {
+        servicesToBePolled.addAll(this.services.keySet());
+      }
+      poller.pollServices(servicesToBePolled);
+    });
+    System.out.println("Backend service poller started");
+    startPollerFuture.complete();
+    return startPollerFuture;
+  }
+
+
   private Future<Void> prepareDatabase() {
     this.connector = new DBConnector(vertx);
     final Future<Void> databaseFuture = Future.future();
     connector.query(SQL_CREATE_SERVICE_TABLE_IF_NOT_EXISTS).setHandler(done -> {
       if (done.succeeded()) {
-        System.out.println("completed db migrations");
+        System.out.println("Completed db migrations");
         databaseFuture.complete();
       } else {
         databaseFuture.fail(done.cause());
